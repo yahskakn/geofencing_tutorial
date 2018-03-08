@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Geofencing</string>
+    <string name="motionString">"motionState : hardcoded"</string>
 </resources>

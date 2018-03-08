@@ -15,6 +15,7 @@ import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.util.Pair;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
@@ -40,6 +41,20 @@ import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.awareness.Awareness;
+import com.google.android.gms.awareness.snapshot.DetectedActivityResponse;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.location.ActivityRecognitionResult;
+import com.google.android.gms.location.DetectedActivity;
+
+import android.widget.Toast;
+import java.util.ArrayList;
+import android.location.Geocoder;
+import android.location.Address;
+import java.util.Locale;
+import java.util.List;
+import java.io.IOException;
+import java.util.HashMap;
 
 public class MainActivity extends AppCompatActivity
         implements
@@ -58,8 +73,69 @@ public class MainActivity extends AppCompatActivity
     private Location lastLocation;
 
     private TextView textLat, textLong;
+    private TextView textMotionState;
 
     private MapFragment mapFragment;
+    private ArrayList<Geofence> mGeofenceList;
+    private static int geoId = 0;
+    private List<LatLng> geoCenters;
+    private List<String> reqIds;
+    private ArrayList<Marker> gfmarkr = new ArrayList<Marker>();
+    private ArrayList<Circle> gflimits = new ArrayList<>();
+
+    class geofenceClass {
+        private Geofence geofence;
+        private Circle geoLimit;
+        private Marker geoMarker;
+        private int maxOccupancy;
+        private int currOccupancy;
+        private String requestId;
+
+        public void setGeofence(Geofence geofence) {
+            this.geofence = geofence;
+        }
+
+        public void setGeoMarker(Marker geoMarker) {
+            this.geoMarker = geoMarker;
+        }
+
+        public void setRequestId(String requestId) {
+            this.requestId = requestId;
+        }
+
+        public void setGeoLimit(Circle geoLimit) {
+            this.geoLimit = geoLimit;
+        }
+
+        public void setMaxOccupancy(int maxOccupancy) {
+            this.maxOccupancy = maxOccupancy;
+        }
+
+        public void setCurrOccupancy(int currOccupancy) {
+            this.currOccupancy = currOccupancy;
+        }
+
+        public Geofence getGeofence() {
+            return this.geofence;
+        }
+
+        public Circle getGeoLimit() {
+            return this.geoLimit;
+        }
+
+        public Marker getGeoMarker() {
+            return this.geoMarker;
+        }
+
+        public String getRequestId() {
+            return this.requestId;
+        }
+
+    }
+
+    HashMap<String, geofenceClass> geoHash = new HashMap<>();
+    private ArrayList<geofenceClass> geoObjects = new ArrayList<>();
+    HashMap<LatLng, geofenceClass> geoLatHash = new HashMap<>();
 
     private static final String NOTIFICATION_MSG = "NOTIFICATION MSG";
     // Create a Intent send by the notification
@@ -75,6 +151,12 @@ public class MainActivity extends AppCompatActivity
         setContentView(R.layout.activity_main);
         textLat = (TextView) findViewById(R.id.lat);
         textLong = (TextView) findViewById(R.id.lon);
+        textMotionState = (TextView) findViewById(R.id.motionstate);
+
+        // Empty list for storing geofences.
+        mGeofenceList = new ArrayList<>();
+        geoCenters = new ArrayList<LatLng>();
+        reqIds = new ArrayList<String>();
 
         // initialize GoogleMaps
         initGMaps();
@@ -201,9 +283,13 @@ public class MainActivity extends AppCompatActivity
         markerForGeofence(latLng);
     }
 
+    private Marker geoCenterMarked;
     @Override
     public boolean onMarkerClick(Marker marker) {
         Log.d(TAG, "onMarkerClickListener: " + marker.getPosition() );
+        //If click happens on geocenter for removal, we need this
+        geoCenterMarked = marker;
+        geoFenceMarker = null;
         return false;
     }
 
@@ -230,6 +316,7 @@ public class MainActivity extends AppCompatActivity
         Log.d(TAG, "onLocationChanged ["+location+"]");
         lastLocation = location;
         writeActualLocation(location);
+        writeCurrentMotionState();
     }
 
     // GoogleApiClient.ConnectionCallbacks connected
@@ -237,7 +324,7 @@ public class MainActivity extends AppCompatActivity
     public void onConnected(@Nullable Bundle bundle) {
         Log.i(TAG, "onConnected()");
         getLastKnownLocation();
-        recoverGeofenceMarker();
+    //    recoverGeofenceMarker();
     }
 
     // GoogleApiClient.ConnectionCallbacks suspended
@@ -278,6 +365,27 @@ public class MainActivity extends AppCompatActivity
         markerLocation(new LatLng(location.getLatitude(), location.getLongitude()));
     }
 
+    private void writeCurrentMotionState() {
+        Log.d(TAG, "writeCurrentMotionState()");
+        Awareness.getSnapshotClient(this).getDetectedActivity()
+                .addOnSuccessListener(new OnSuccessListener<DetectedActivityResponse>() {
+                    @Override
+                    public void onSuccess(DetectedActivityResponse dar) {
+                        ActivityRecognitionResult arr = dar.getActivityRecognitionResult();
+                        // getMostProbableActivity() is good enough for basic Activity detection.
+                        // To work within a threshold of confidence,
+                        // use ActivityRecognitionResult.getProbableActivities() to get a list of
+                        // potential current activities, and check the confidence of each one.
+                        DetectedActivity probableActivity = arr.getMostProbableActivity();
+
+                        int confidence = probableActivity.getConfidence();
+                        String activityStr = probableActivity.toString();
+                        textMotionState.setText("Current motion : " + activityStr +
+                                                "confidence:" + confidence + "/100");
+                    }
+                });
+    }
+
     private void writeLastLocation() {
         writeActualLocation(lastLocation);
     }
@@ -300,6 +408,8 @@ public class MainActivity extends AppCompatActivity
     }
 
 
+
+
     private Marker geoFenceMarker;
     private void markerForGeofence(LatLng latLng) {
         Log.i(TAG, "markerForGeofence("+latLng+")");
@@ -311,35 +421,131 @@ public class MainActivity extends AppCompatActivity
                 .title(title);
         if ( map!=null ) {
             // Remove last geoFenceMarker
+            /*
             if (geoFenceMarker != null)
                 geoFenceMarker.remove();
-
+             */
             geoFenceMarker = map.addMarker(markerOptions);
 
+            gfmarkr.add(geoFenceMarker);
+            Log.d(TAG, "geoFenceMarker added");
+
+            map.setOnMarkerDragListener(new GoogleMap.OnMarkerDragListener() {
+                @Override
+                public void onMarkerDragStart(Marker marker) {
+
+                }
+
+                @Override
+                public void onMarkerDrag(Marker marker) {
+
+                }
+
+                @Override
+                public void onMarkerDragEnd(Marker marker) {
+
+                    Log.d("System out", "onMarkerDragEnd...");
+                    map.animateCamera(CameraUpdateFactory.newLatLng(marker.getPosition()));
+                    double lat = marker.getPosition().latitude;
+                    double lng = marker.getPosition().longitude;
+                    Toast.makeText(getBaseContext(), "" + lat + ", " + lng, Toast.LENGTH_SHORT).show();
+                    addressDragged(lat, lng);
+                }
+            });
         }
     }
 
+    public void addressDragged(final double lat, final double lng){
+
+        Geocoder geocoder = new Geocoder(getBaseContext(), Locale.getDefault());
+        String result = "";
+        try {
+            List<Address> addressList = geocoder.getFromLocation(
+                    lat, lng, 1);
+            if (addressList != null && addressList.size() > 0) {
+                String addres = addressList.get(0).getAddressLine(0); // If any additional address line present than only, check with max available address lines by getMaxAddressLineIndex()
+                result = addres;
+            }
+            else {
+                result="Failed to retrieve address.";
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Unable connect to Geocoder", e);
+        }
+        Toast.makeText(getBaseContext(), result, Toast.LENGTH_SHORT).show();
+    }
+
     // Start Geofence creation process
+    private Marker finalGeoFenceMarker;
     private void startGeofence() {
         Log.i(TAG, "startGeofence()");
-        if( geoFenceMarker != null ) {
-            Geofence geofence = createGeofence( geoFenceMarker.getPosition(), GEOFENCE_RADIUS );
-            GeofencingRequest geofenceRequest = createGeofenceRequest( geofence );
-            addGeofence( geofenceRequest );
+        if (geoFenceMarker != null) {
+            finalGeoFenceMarker = geoFenceMarker;
+        } else {
+            finalGeoFenceMarker = geoCenterMarked;
+        }
+        if( finalGeoFenceMarker != null ) {
+            if (geoFenceIsNonOverlapping(finalGeoFenceMarker)) {
+                String reqId = "Geo" + Integer.toString(geoId);
+                Log.d(TAG, "adding to reqIds, array size " + reqIds.size());
+
+                //reqIds.add(reqId);
+
+                geoId++;
+
+                Geofence geofence = createGeofence(finalGeoFenceMarker.getPosition(), GEOFENCE_RADIUS, reqId);
+                geofenceClass geoObject = new geofenceClass();
+                geoObject.setGeofence(geofence);
+                geoObject.setGeoMarker(finalGeoFenceMarker);
+                geoObject.setRequestId(reqId);
+                geoObjects.add(geoObject);
+                geoHash.put(reqId, geoObject);
+                geoLatHash.put(finalGeoFenceMarker.getPosition(), geoObject);
+                Log.w(TAG, "Adding to geoLatHash" + finalGeoFenceMarker.getPosition());
+                finalGeoFenceMarker.setTag(reqId);
+
+                //mGeofenceList.add(geofence);
+
+                //geoCenters.add(geoFenceMarker.getPosition());
+
+                GeofencingRequest geofenceRequest = createGeofenceRequest(geofence);
+                addGeofence(geofenceRequest);
+            }
+            else {
+                Log.e(TAG, "This geofence overlaps with one that is already present." +
+                        "failed to create");
+            }
         } else {
             Log.e(TAG, "Geofence marker is null");
         }
     }
 
+    private boolean geoFenceIsNonOverlapping(Marker finalGeoFenceMarker) {
+        float[] results = {0};
+        for (geofenceClass geoObject : geoObjects) {
+            Marker iterMarker = geoObject.getGeoMarker();
+            Location.distanceBetween(finalGeoFenceMarker.getPosition().latitude,
+                    finalGeoFenceMarker.getPosition().longitude,
+                    iterMarker.getPosition().latitude,
+                    iterMarker.getPosition().longitude,
+                    results);
+
+            if (results[0] < 2 * GEOFENCE_RADIUS) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static final long GEO_DURATION = 60 * 60 * 1000;
-    private static final String GEOFENCE_REQ_ID = "My Geofence";
+    //private static final String GEOFENCE_REQ_ID = "My Geofence";
     private static final float GEOFENCE_RADIUS = 500.0f; // in meters
 
     // Create a Geofence
-    private Geofence createGeofence( LatLng latLng, float radius ) {
+    private Geofence createGeofence( LatLng latLng, float radius, String reqId ) {
         Log.d(TAG, "createGeofence");
         return new Geofence.Builder()
-                .setRequestId(GEOFENCE_REQ_ID)
+                .setRequestId(reqId)
                 .setCircularRegion( latLng.latitude, latLng.longitude, radius)
                 .setExpirationDuration( GEO_DURATION )
                 .setTransitionTypes( Geofence.GEOFENCE_TRANSITION_ENTER
@@ -348,7 +554,7 @@ public class MainActivity extends AppCompatActivity
     }
 
     // Create a Geofence Request
-    private GeofencingRequest createGeofenceRequest( Geofence geofence ) {
+    private GeofencingRequest createGeofenceRequest(Geofence geofence) {
         Log.d(TAG, "createGeofenceRequest");
         return new GeofencingRequest.Builder()
                 .setInitialTrigger( GeofencingRequest.INITIAL_TRIGGER_ENTER )
@@ -383,7 +589,7 @@ public class MainActivity extends AppCompatActivity
     public void onResult(@NonNull Status status) {
         Log.i(TAG, "onResult: " + status);
         if ( status.isSuccess() ) {
-            saveGeofence();
+            //saveGeofence();
             drawGeofence();
         } else {
             // inform about fail
@@ -395,15 +601,15 @@ public class MainActivity extends AppCompatActivity
     private void drawGeofence() {
         Log.d(TAG, "drawGeofence()");
 
-        if ( geoFenceLimits != null )
-            geoFenceLimits.remove();
 
         CircleOptions circleOptions = new CircleOptions()
-                .center( geoFenceMarker.getPosition())
+                .center( finalGeoFenceMarker.getPosition())
                 .strokeColor(Color.argb(50, 70,70,70))
                 .fillColor( Color.argb(100, 150,150,150) )
                 .radius( GEOFENCE_RADIUS );
         geoFenceLimits = map.addCircle( circleOptions );
+        gflimits.add(geoFenceLimits);
+        geoLatHash.get(finalGeoFenceMarker.getPosition()).setGeoLimit(geoFenceLimits);
     }
 
     private final String KEY_GEOFENCE_LAT = "GEOFENCE LATITUDE";
@@ -436,27 +642,48 @@ public class MainActivity extends AppCompatActivity
 
     // Clear Geofence
     private void clearGeofence() {
-        Log.d(TAG, "clearGeofence()");
+        Log.w(TAG, "clearGeofence() finding geoLatHash" + geoCenterMarked.getPosition());
+        List<String> reqIdList = new ArrayList<String>();
+        String reqId;
+        try {
+            reqId = geoLatHash.get(geoCenterMarked.getPosition()).getRequestId();
+        } catch (NullPointerException e ) {
+            Log.e(TAG, "No Geofence found for that Position");
+            return;
+        }
+        Log.d(TAG, "reqId for deletion" + reqId);
+        final String forward_reqId = reqId;
+        reqIdList.add(reqId);
+
         LocationServices.GeofencingApi.removeGeofences(
                 googleApiClient,
-                createGeofencePendingIntent()
+                reqIdList
         ).setResultCallback(new ResultCallback<Status>() {
             @Override
             public void onResult(@NonNull Status status) {
                 if ( status.isSuccess() ) {
                     // remove drawing
-                    removeGeofenceDraw();
+
+                    removeGeofenceDraw(geoHash.get(forward_reqId));
+                    geoObjects.remove(geoHash.get(forward_reqId));
+                    //reqIds.remove(forward_iter);
+                    //Log.d(TAG, "Removing from reqIds, array size " + reqIds.size());
+                    //mGeofenceList.remove(forward_iter);
+                    //geoCenters.remove(forward_iter);
                 }
             }
         });
+
+
     }
 
-    private void removeGeofenceDraw() {
+
+    private void removeGeofenceDraw(geofenceClass geoObject) {
         Log.d(TAG, "removeGeofenceDraw()");
-        if ( geoFenceMarker != null)
-            geoFenceMarker.remove();
-        if ( geoFenceLimits != null )
-            geoFenceLimits.remove();
+        if ( geoObject.getGeoMarker() != null)
+            geoObject.getGeoMarker().remove();
+        if ( geoObject.getGeoLimit() != null )
+           geoObject.getGeoLimit().remove();
     }
 
 }
