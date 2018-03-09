@@ -8,7 +8,10 @@ import android.app.TaskStackBuilder;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.os.Message;
+import android.os.Messenger;
 import android.support.v4.app.NotificationCompat;
+import android.support.v4.content.LocalBroadcastManager;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -18,6 +21,8 @@ import com.google.android.gms.location.GeofencingEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+
+
 
 
 public class GeofenceTrasitionService extends IntentService {
@@ -32,6 +37,7 @@ public class GeofenceTrasitionService extends IntentService {
 
     @Override
     protected void onHandleIntent(Intent intent) {
+        Log.i(TAG, "SAIF: Got some FUCKIN intent!");
         GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
         // Handling errors
         if ( geofencingEvent.hasError() ) {
@@ -44,13 +50,17 @@ public class GeofenceTrasitionService extends IntentService {
         // Check if the transition type is of interest
         if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ||
                 geoFenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT ) {
+            Log.i("SAIF", "SAIF: Got some FUCKIN trigger!");
+
             // Get the geofence that were triggered
             List<Geofence> triggeringGeofences = geofencingEvent.getTriggeringGeofences();
 
-            String geofenceTransitionDetails = getGeofenceTrasitionDetails(geoFenceTransition, triggeringGeofences );
+            String geofenceTransitionDetails = getGeofenceTrasitionDetails(geoFenceTransition, triggeringGeofences);
 
             // Send notification details as a String
-            sendNotification( geofenceTransitionDetails );
+            sendNotification(geofenceTransitionDetails);
+        } else {
+            Log.i("SAIF", "SAIF: Didnt get SHIT!");
         }
     }
 
@@ -63,8 +73,28 @@ public class GeofenceTrasitionService extends IntentService {
         }
 
         String status = null;
-        if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER )
+        if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ) {
             status = "Entering ";
+            Log.i("SAIF", "SAIF: Entered SOME FUCKING  geofence");
+            if (triggeringGeofences.get(0).getRequestId().equals("Geo0")) {
+                Log.i("SAIF", "SAIF: Entered entry geofence");
+
+                //DELETE SAIF
+                Intent I = new Intent();
+                I.setAction(MainActivity.TRYACCESSMAIN);
+                I.putExtra("data", "printAllGeos");
+                sendBroadcast(I);
+                //END
+//               for (MainActivity.geofenceClass iter : MainActivity.geoObjects) {
+//                    MainActivity.drawGeofence(iter.getGeoCenter(),iter.getRadius(), 255,200,100);
+//                }
+
+            } else {
+                Log.i("SAIF", "SAIF: couldnt entry geofence");
+
+            }
+        }
+
         else if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT )
             status = "Exiting ";
         return status + TextUtils.join( ", ", triggeringGeofencesList);

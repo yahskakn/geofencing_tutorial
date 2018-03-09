@@ -2,16 +2,23 @@ package com.tinmegali.mylocation;
 
 import android.Manifest;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.location.Location;
+import android.net.ConnectivityManager;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -55,6 +62,7 @@ import java.util.Locale;
 import java.util.List;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity
         implements
@@ -68,9 +76,13 @@ public class MainActivity extends AppCompatActivity
 
     private static final String TAG = MainActivity.class.getSimpleName();
 
-    private GoogleMap map;
+    public static GoogleMap map;
     private GoogleApiClient googleApiClient;
     private Location lastLocation;
+
+    //DELETE SAIF
+    BroadcastReceiver bManager;
+    //END
 
     private TextView textLat, textLong;
     private TextView textMotionState;
@@ -83,7 +95,7 @@ public class MainActivity extends AppCompatActivity
     private ArrayList<Marker> gfmarkr = new ArrayList<Marker>();
     private ArrayList<Circle> gflimits = new ArrayList<>();
 
-    class geofenceClass {
+    public class geofenceClass {
         private Geofence geofence;
         private Circle geoLimit;
         private Marker geoMarker;
@@ -141,12 +153,18 @@ public class MainActivity extends AppCompatActivity
 
         public float getRadius() { return this.radius; }
 
+        public int getMaxOccupancy() { return  this.maxOccupancy; }
+
+        public int getCurrOccupancy() { return  this.currOccupancy; }
+
     }
 
     HashMap<String, geofenceClass> geoHash = new HashMap<>();
-    private ArrayList<geofenceClass> geoObjects = new ArrayList<>();
-    HashMap<LatLng, geofenceClass> geoLatHash = new HashMap<>();
-    private ArrayList<geofenceClass> pendingDrawGeofence = new ArrayList<>();
+
+    public static ArrayList<geofenceClass> geoObjects = new ArrayList<>();
+
+    public static HashMap<LatLng, geofenceClass> geoLatHash = new HashMap<>();
+    public static ArrayList<geofenceClass> pendingDrawGeofence = new ArrayList<>();
     private static final String NOTIFICATION_MSG = "NOTIFICATION MSG";
     // Create a Intent send by the notification
     public static Intent makeNotificationIntent(Context context, String msg) {
@@ -157,6 +175,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Log.d(TAG,"onCreate called" + savedInstanceState);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         textLat = (TextView) findViewById(R.id.lat);
@@ -173,6 +192,13 @@ public class MainActivity extends AppCompatActivity
 
         // create GoogleApiClient
         createGoogleApi();
+
+        //DELETE SAIF
+        BroadcastReceiver bManager = new MyBroadcastReceiver();
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(TRYACCESSMAIN);
+        //bManager.registerReceiver(bReceiver, intentFilter);
+        this.registerReceiver(bManager, intentFilter);
 
 
     }
@@ -199,6 +225,15 @@ public class MainActivity extends AppCompatActivity
 
 
     }
+
+    //DELETE SAIF
+    @Override
+    protected void onDestroy() {
+
+       // this.unregisterReceiver(bManager);
+
+    }
+    //END
 
     @Override
     protected void onStop() {
@@ -334,26 +369,33 @@ public class MainActivity extends AppCompatActivity
         writeCurrentMotionState();
     }
 
+    public boolean onConnectedCalled = false;
     // GoogleApiClient.ConnectionCallbacks connected
     @Override
     public void onConnected(@Nullable Bundle bundle) {
-        Log.i(TAG, "onConnected()");
-        getLastKnownLocation();
-        //fetch the geofence Database
-        Rest.getInstance().fetch(new FetchReply() {
-            @Override
-            public void onReply(boolean success, List<OccupancyDatabase> data) {
-                if(success) {
-                    Log.d("DEBUG_", "Data received" + data.toString());
-                    for (OccupancyDatabase iter: data) {
-                        startGeofence(new LatLng(iter.latitude,iter.longitude), (float)iter.radius);
-                    }
+        if (onConnectedCalled == false) {
+            onConnectedCalled = true;
+            Log.i(TAG, "onConnected()");
+            getLastKnownLocation();
+            //fetch the geofence Database
+            Rest.getInstance().fetch(new FetchReply() {
+                @Override
+                public void onReply(boolean success, List<OccupancyDatabase> data) {
+                    if (success) {
+                        Log.d("DEBUG_", "Data received" + data.toString());
+                        for (OccupancyDatabase iter : data) {
+                            Log.d("SFILARGI", "adding " + iter.geoFenceId);
+                            startGeofence(new LatLng(iter.latitude, iter.longitude), (float) iter.radius, iter.max_occupancy, iter.current_occupancy);
+                        }
 
-                } else {
-                    Log.d("DEBUG_", "failed fetch");
+                    } else {
+                        Log.d("DEBUG_", "failed fetch");
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            //nop
+        }
     //    recoverGeofenceMarker();
     }
 
@@ -507,7 +549,7 @@ public class MainActivity extends AppCompatActivity
 
     // Start Geofence creation process
     private LatLng finalGeofenceCenter;
-    private void startGeofence(LatLng latLng, float radius) {
+    private void startGeofence(LatLng latLng, float radius, int maxoccupancy, int currentoccupancy) {
         Log.i(TAG, "startGeofence()");
         /*if (geoFenceMarker != null) {
             finalGeoFenceMarker = geoFenceMarker;
@@ -533,6 +575,8 @@ public class MainActivity extends AppCompatActivity
                 geoObject.setGeoCenter(finalGeofenceCenter);
                 geoObject.setRequestId(reqId);
                 geoObject.setRadius(radius);
+                geoObject.setMaxOccupancy(maxoccupancy);
+                geoObject.setCurrOccupancy(currentoccupancy);
                 geoObjects.add(geoObject);
                 pendingDrawGeofence.add(geoObject);
                 geoHash.put(reqId, geoObject);
@@ -627,7 +671,7 @@ public class MainActivity extends AppCompatActivity
         if ( status.isSuccess() ) {
             //saveGeofence();
             geofenceClass geoObject = pendingDrawGeofence.get(0);
-            drawGeofence(geoObject.getGeoCenter(), geoObject.getRadius());
+            //drawGeofence(geoObject.getGeoCenter(), geoObject.getRadius(),255,255,100);
             pendingDrawGeofence.remove(0);
         } else {
             // inform about fail
@@ -635,17 +679,21 @@ public class MainActivity extends AppCompatActivity
     }
 
     // Draw Geofence circle on GoogleMap
-    private Circle geoFenceLimits;
-    private void drawGeofence(LatLng geoCenter, float radius) {
+    public static Circle geoFenceLimits;
+    public static void drawGeofence(LatLng geoCenter, float radius, int red, int green, int blue) {
         Log.d(TAG, "drawGeofence()");
-
+        try {
+            geoLatHash.get(geoCenter).getGeoLimit().remove();
+        } catch(NullPointerException e) {
+            //nop
+        }
         CircleOptions circleOptions = new CircleOptions()
                 .center( geoCenter)
-                .strokeColor(Color.argb(50, 70,70,70))
-                .fillColor( Color.argb(100, 150,150,150) )
+                .strokeColor(Color.rgb(red, green, blue))
+                .fillColor(Color.rgb(red, green, blue))
                 .radius( radius );
         geoFenceLimits = map.addCircle( circleOptions );
-        gflimits.add(geoFenceLimits);
+        //gflimits.add(geoFenceLimits);
         geoLatHash.get(geoCenter).setGeoLimit(geoFenceLimits);
     }
 
@@ -725,5 +773,145 @@ public class MainActivity extends AppCompatActivity
         if ( geoObject.getGeoLimit() != null )
            geoObject.getGeoLimit().remove();
     }
+
+
+    //DELETE SAIF
+    public static final String TRYACCESSMAIN = "com.tinmegali.mylocation.TRYACCESSMAIN";
+    public final Handler handler = new Handler();
+
+ //   private BroadcastReceiver bReceiver = new BroadcastReceiver() {
+    private class MyBroadcastReceiver extends BroadcastReceiver {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            //boolean foundBestGeo = false;
+            //geofenceClass bestGeoObject = null;
+            Log.i("service", "entered onReceive");
+            if(intent.getAction().equals(TRYACCESSMAIN)) {
+                String serviceJsonString = intent.getStringExtra("data");
+                if (serviceJsonString.equals("printAllGeos") ) {
+
+                    //color all the geofences orange
+                    for (geofenceClass geoIter : geoObjects) {
+                        Log.i(TAG, "making Orange" + geoIter.getRequestId().toString() + "Center" + geoIter.getGeoCenter());
+                        if(!geoIter.getRequestId().equals("Geo0")) {
+                            drawGeofence(geoIter.getGeoCenter(), geoIter.getRadius(), 100, 100, 100);
+                        }
+                    }
+
+
+                  /*  handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            drawGeofence(geoObjects.get(0).getGeoCenter(), geoObjects.get(0).getRadius(),255,0,0);
+                        }
+                    }, 1000);*/
+
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            drawGeofence(geoObjects.get(3).getGeoCenter(), geoObjects.get(3).getRadius(),255,0,0);
+                        }
+                    }, 1000);
+
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            drawGeofence(geoObjects.get(4).getGeoCenter(), geoObjects.get(4).getRadius(),255,0,0);
+                        }
+                    }, 2000);
+
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            drawGeofence(geoObjects.get(2).getGeoCenter(), geoObjects.get(2).getRadius(),0,255,0);
+                        }
+                    }, 3000);
+
+
+
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            //geoObjects.get(0).getGeoLimit().remove();
+                            geoObjects.get(1).getGeoLimit().remove();
+                            geoObjects.get(3).getGeoLimit().remove();
+                            geoObjects.get(4).getGeoLimit().remove();
+
+                        }
+                    }, 4000);
+
+
+
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            Intent intent = new Intent(android.content.Intent.ACTION_VIEW,
+                                    Uri.parse("http://maps.google.com/maps?saddr="+
+                                            lastLocation.getLatitude()+","+
+                                            lastLocation.getLongitude()+"&daddr="+
+                                            geoObjects.get(2).getGeoCenter().latitude+","+
+                                            geoObjects.get(2).getGeoCenter().longitude));
+                            startActivity(intent);
+                        }
+                    }, 6000);
+
+/*                    for (int i=0; i<2; i++) {
+                        drawGeofence(geoObjects.get(i).getGeoCenter(), geoObjects.get(i).getRadius(),255,0,0);
+                        try {
+                            TimeUnit.MILLISECONDS.sleep(200);
+                        } catch(InterruptedException E) {
+                            //nop
+                        }
+                    }
+
+                    drawGeofence(geoObjects.get(2).getGeoCenter(),geoObjects.get(2).getRadius(),0,255,0);
+
+                    for (int i=0; i<5; i++) {
+                        if(i!=2) {
+                            try {
+                                geoObjects.get(i).getGeoLimit().remove();
+                            } catch (NullPointerException e) {
+                                //nop
+                            }
+                        }
+                    }*/
+                    //select best geoFence
+/*                      for (geofenceClass geoIter : geoObjects) {
+
+                      Log.i(TAG, "Looking at best" + geoIter.getRequestId().toString());
+                        if (!foundBestGeo) {
+                            if (geoIter.getMaxOccupancy() - geoIter.getCurrOccupancy() > 0) {
+                                bestGeoObject = geoIter;
+                                foundBestGeo = true;
+                                break;
+                            } else {
+                                drawGeofence(geoIter.getGeoCenter(),geoIter.getRadius(), 255, 0,0);
+                            }
+                        }
+                        try {
+                            TimeUnit.SECONDS.sleep(1);
+                        } catch(InterruptedException E) {
+                            //nop
+                        }
+                    }
+                    if(bestGeoObject != null) {
+                        Log.i(TAG, "drawingBest" + bestGeoObject.getRequestId().toString());
+                        drawGeofence(bestGeoObject.getGeoCenter(),bestGeoObject.getRadius(),0,255,0);
+                    }
+
+                    //remove all other geoFences
+                    for (geofenceClass geoIter : geoObjects) {
+                        if(geoIter.getRequestId() != bestGeoObject.getRequestId()) {
+                            geoIter.getGeoLimit().remove();
+                        }
+                    }
+*/
+
+                }
+                 //Do something with the string
+            }
+        }
+    };
 
 }
