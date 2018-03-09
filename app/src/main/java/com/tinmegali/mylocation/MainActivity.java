@@ -90,6 +90,8 @@ public class MainActivity extends AppCompatActivity
         private int maxOccupancy;
         private int currOccupancy;
         private String requestId;
+        private LatLng geoCenter;
+        private float radius;
 
         public void setGeofence(Geofence geofence) {
             this.geofence = geofence;
@@ -99,6 +101,8 @@ public class MainActivity extends AppCompatActivity
             this.geoMarker = geoMarker;
         }
 
+        public void setGeoCenter(LatLng latLng) { this.geoCenter = latLng; }
+
         public void setRequestId(String requestId) {
             this.requestId = requestId;
         }
@@ -106,6 +110,8 @@ public class MainActivity extends AppCompatActivity
         public void setGeoLimit(Circle geoLimit) {
             this.geoLimit = geoLimit;
         }
+
+        public void setRadius(float radius) { this.radius = radius; }
 
         public void setMaxOccupancy(int maxOccupancy) {
             this.maxOccupancy = maxOccupancy;
@@ -119,6 +125,8 @@ public class MainActivity extends AppCompatActivity
             return this.geofence;
         }
 
+        public LatLng getGeoCenter() { return this.geoCenter; }
+
         public Circle getGeoLimit() {
             return this.geoLimit;
         }
@@ -131,12 +139,14 @@ public class MainActivity extends AppCompatActivity
             return this.requestId;
         }
 
+        public float getRadius() { return this.radius; }
+
     }
 
     HashMap<String, geofenceClass> geoHash = new HashMap<>();
     private ArrayList<geofenceClass> geoObjects = new ArrayList<>();
     HashMap<LatLng, geofenceClass> geoLatHash = new HashMap<>();
-
+    private ArrayList<geofenceClass> pendingDrawGeofence = new ArrayList<>();
     private static final String NOTIFICATION_MSG = "NOTIFICATION MSG";
     // Create a Intent send by the notification
     public static Intent makeNotificationIntent(Context context, String msg) {
@@ -163,6 +173,8 @@ public class MainActivity extends AppCompatActivity
 
         // create GoogleApiClient
         createGoogleApi();
+
+
     }
 
     // Create GoogleApiClient instance
@@ -183,6 +195,9 @@ public class MainActivity extends AppCompatActivity
 
         // Call GoogleApiClient connection when starting the Activity
         googleApiClient.connect();
+
+
+
     }
 
     @Override
@@ -204,7 +219,7 @@ public class MainActivity extends AppCompatActivity
     public boolean onOptionsItemSelected(MenuItem item) {
         switch ( item.getItemId() ) {
             case R.id.geofence: {
-                startGeofence();
+                //startGeofence();
                 return true;
             }
             case R.id.clear: {
@@ -324,6 +339,21 @@ public class MainActivity extends AppCompatActivity
     public void onConnected(@Nullable Bundle bundle) {
         Log.i(TAG, "onConnected()");
         getLastKnownLocation();
+        //fetch the geofence Database
+        Rest.getInstance().fetch(new FetchReply() {
+            @Override
+            public void onReply(boolean success, List<OccupancyDatabase> data) {
+                if(success) {
+                    Log.d("DEBUG_", "Data received" + data.toString());
+                    for (OccupancyDatabase iter: data) {
+                        startGeofence(new LatLng(iter.latitude,iter.longitude), (float)iter.radius);
+                    }
+
+                } else {
+                    Log.d("DEBUG_", "failed fetch");
+                }
+            }
+        });
     //    recoverGeofenceMarker();
     }
 
@@ -401,7 +431,7 @@ public class MainActivity extends AppCompatActivity
             if ( locationMarker != null )
                 locationMarker.remove();
             locationMarker = map.addMarker(markerOptions);
-            float zoom = 14f;
+            float zoom = 17f;
             CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngZoom(latLng, zoom);
             map.animateCamera(cameraUpdate);
         }
@@ -476,16 +506,19 @@ public class MainActivity extends AppCompatActivity
     }
 
     // Start Geofence creation process
-    private Marker finalGeoFenceMarker;
-    private void startGeofence() {
+    private LatLng finalGeofenceCenter;
+    private void startGeofence(LatLng latLng, float radius) {
         Log.i(TAG, "startGeofence()");
-        if (geoFenceMarker != null) {
+        /*if (geoFenceMarker != null) {
             finalGeoFenceMarker = geoFenceMarker;
         } else {
             finalGeoFenceMarker = geoCenterMarked;
-        }
-        if( finalGeoFenceMarker != null ) {
-            if (geoFenceIsNonOverlapping(finalGeoFenceMarker)) {
+        } */
+
+
+        if( latLng != null ) {
+            if (geoFenceIsNonOverlapping(latLng, radius)) {
+                finalGeofenceCenter = latLng;
                 String reqId = "Geo" + Integer.toString(geoId);
                 Log.d(TAG, "adding to reqIds, array size " + reqIds.size());
 
@@ -493,16 +526,19 @@ public class MainActivity extends AppCompatActivity
 
                 geoId++;
 
-                Geofence geofence = createGeofence(finalGeoFenceMarker.getPosition(), GEOFENCE_RADIUS, reqId);
+                Geofence geofence = createGeofence(finalGeofenceCenter, radius, reqId);
                 geofenceClass geoObject = new geofenceClass();
                 geoObject.setGeofence(geofence);
-                geoObject.setGeoMarker(finalGeoFenceMarker);
+                //geoObject.setGeoMarker(finalGeofenceCenter);
+                geoObject.setGeoCenter(finalGeofenceCenter);
                 geoObject.setRequestId(reqId);
+                geoObject.setRadius(radius);
                 geoObjects.add(geoObject);
+                pendingDrawGeofence.add(geoObject);
                 geoHash.put(reqId, geoObject);
-                geoLatHash.put(finalGeoFenceMarker.getPosition(), geoObject);
-                Log.w(TAG, "Adding to geoLatHash" + finalGeoFenceMarker.getPosition());
-                finalGeoFenceMarker.setTag(reqId);
+                geoLatHash.put(finalGeofenceCenter, geoObject);
+                Log.w(TAG, "Adding to geoLatHash" + finalGeofenceCenter);
+                //finalGeoFenceMarker.setTag(reqId);
 
                 //mGeofenceList.add(geofence);
 
@@ -520,17 +556,17 @@ public class MainActivity extends AppCompatActivity
         }
     }
 
-    private boolean geoFenceIsNonOverlapping(Marker finalGeoFenceMarker) {
+    private boolean geoFenceIsNonOverlapping(LatLng latLng, float radius) {
         float[] results = {0};
         for (geofenceClass geoObject : geoObjects) {
-            Marker iterMarker = geoObject.getGeoMarker();
-            Location.distanceBetween(finalGeoFenceMarker.getPosition().latitude,
-                    finalGeoFenceMarker.getPosition().longitude,
-                    iterMarker.getPosition().latitude,
-                    iterMarker.getPosition().longitude,
+            LatLng iterLatLng = geoObject.getGeoCenter();
+            Location.distanceBetween(latLng.latitude,
+                    latLng.longitude,
+                    iterLatLng.latitude,
+                    iterLatLng.longitude,
                     results);
-
-            if (results[0] < 2 * GEOFENCE_RADIUS) {
+            Log.d(TAG, "Overlapping?" + latLng + "," + iterLatLng + ",radius" + radius + "distanceBetween:" + results[0]);
+            if (results[0] < 2 * radius) {
                 return false;
             }
         }
@@ -590,7 +626,9 @@ public class MainActivity extends AppCompatActivity
         Log.i(TAG, "onResult: " + status);
         if ( status.isSuccess() ) {
             //saveGeofence();
-            drawGeofence();
+            geofenceClass geoObject = pendingDrawGeofence.get(0);
+            drawGeofence(geoObject.getGeoCenter(), geoObject.getRadius());
+            pendingDrawGeofence.remove(0);
         } else {
             // inform about fail
         }
@@ -598,18 +636,17 @@ public class MainActivity extends AppCompatActivity
 
     // Draw Geofence circle on GoogleMap
     private Circle geoFenceLimits;
-    private void drawGeofence() {
+    private void drawGeofence(LatLng geoCenter, float radius) {
         Log.d(TAG, "drawGeofence()");
 
-
         CircleOptions circleOptions = new CircleOptions()
-                .center( finalGeoFenceMarker.getPosition())
+                .center( geoCenter)
                 .strokeColor(Color.argb(50, 70,70,70))
                 .fillColor( Color.argb(100, 150,150,150) )
-                .radius( GEOFENCE_RADIUS );
+                .radius( radius );
         geoFenceLimits = map.addCircle( circleOptions );
         gflimits.add(geoFenceLimits);
-        geoLatHash.get(finalGeoFenceMarker.getPosition()).setGeoLimit(geoFenceLimits);
+        geoLatHash.get(geoCenter).setGeoLimit(geoFenceLimits);
     }
 
     private final String KEY_GEOFENCE_LAT = "GEOFENCE LATITUDE";
@@ -636,19 +673,22 @@ public class MainActivity extends AppCompatActivity
             double lon = Double.longBitsToDouble( sharedPref.getLong( KEY_GEOFENCE_LON, -1 ));
             LatLng latLng = new LatLng( lat, lon );
             markerForGeofence(latLng);
-            drawGeofence();
+            //drawGeofence();
         }
     }
 
     // Clear Geofence
     private void clearGeofence() {
-        Log.w(TAG, "clearGeofence() finding geoLatHash" + geoCenterMarked.getPosition());
         List<String> reqIdList = new ArrayList<String>();
         String reqId;
         try {
+            Log.w(TAG, "clearGeofence() finding geoLatHash" + geoCenterMarked.getPosition());
             reqId = geoLatHash.get(geoCenterMarked.getPosition()).getRequestId();
         } catch (NullPointerException e ) {
             Log.e(TAG, "No Geofence found for that Position");
+            if (geoCenterMarked != null) {
+                geoCenterMarked.remove();
+            }
             return;
         }
         Log.d(TAG, "reqId for deletion" + reqId);
