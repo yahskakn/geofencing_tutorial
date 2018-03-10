@@ -37,7 +37,7 @@ public class GeofenceTrasitionService extends IntentService {
 
     @Override
     protected void onHandleIntent(Intent intent) {
-        Log.i(TAG, "SAIF: Got some FUCKIN intent!");
+        Log.i(TAG, "SAIF: Got some intent!");
         GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
         // Handling errors
         if ( geofencingEvent.hasError() ) {
@@ -50,7 +50,7 @@ public class GeofenceTrasitionService extends IntentService {
         // Check if the transition type is of interest
         if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ||
                 geoFenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT ) {
-            Log.i("SAIF", "SAIF: Got some FUCKIN trigger!");
+            Log.i("SAIF", "SAIF: Got some trigger!");
 
             // Get the geofence that were triggered
             List<Geofence> triggeringGeofences = geofencingEvent.getTriggeringGeofences();
@@ -75,7 +75,7 @@ public class GeofenceTrasitionService extends IntentService {
         String status = null;
         if ( geoFenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ) {
             status = "Entering ";
-            Log.i("SAIF", "SAIF: Entered SOME FUCKING  geofence");
+            Log.i("SAIF", "SAIF: Entered SOME geofence");
             if (triggeringGeofences.get(0).getRequestId().equals("Geo0")) {
                 Log.i("SAIF", "SAIF: Entered entry geofence");
 
